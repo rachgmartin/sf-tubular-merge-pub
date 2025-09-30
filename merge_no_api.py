@@ -1,4 +1,3 @@
-
 #!/usr/bin/env python3
 """
 merge_no_api.py
@@ -30,19 +29,121 @@ Advanced:
     --metrics-cols channel_id:Channel ID,views_30d:Views (30d),audience_size:Subscribers
 """
 import argparse
+from typing import Dict, Optional
+
 import pandas as pd
 
-def parse_colmap(arg: str):
-    mapping = {}
+
+def parse_colmap(arg: str) -> Dict[str, str]:
+    mapping: Dict[str, str] = {}
     if not arg:
         return mapping
     pairs = [p.strip() for p in arg.split(",") if p.strip()]
     for pair in pairs:
         if ":" not in pair:
-            raise SystemExit(f"Bad --metrics-cols pair: {pair}. Use old:new")
+            raise ValueError(f"Bad metrics column pair: {pair}. Use new_name:existing_header")
         new, old = pair.split(":", 1)
         mapping[new.strip()] = old.strip()
     return mapping
+
+
+def _find_channel_column(opps: pd.DataFrame) -> Optional[str]:
+    for col in ["Account.YouTube_Channel_ID__c", "YouTube_Channel_ID__c", "channel_id", "Channel_ID__c"]:
+        if col in opps.columns:
+            return col
+    return None
+
+
+def _select_account_column(opps: pd.DataFrame) -> Optional[str]:
+    for col in ["Account.Name", "account_name", "Account"]:
+        if col in opps.columns:
+            return col
+    return None
+
+
+def merge_data(
+    opps_df: pd.DataFrame,
+    metrics_df: pd.DataFrame,
+    map_df: Optional[pd.DataFrame] = None,
+    metrics_colmap: Optional[Dict[str, str]] = None,
+) -> pd.DataFrame:
+    """Merge Salesforce opportunities and Tubular metrics data frames."""
+
+    opps = opps_df.copy()
+    metrics = metrics_df.copy()
+    metrics_colmap = metrics_colmap or {}
+
+    channel_col = _find_channel_column(opps)
+    map_used = False
+
+    if channel_col is None:
+        if map_df is None:
+            raise ValueError(
+                "Opps CSV has no channel_id column. Provide a channel map with account_name and channel_id."
+            )
+        cmap = map_df.copy()
+        if "account_name" not in cmap.columns or "channel_id" not in cmap.columns:
+            raise ValueError("channel_map.csv must include: account_name, channel_id")
+        acct_col = _select_account_column(opps)
+        if acct_col is None:
+            raise ValueError("Couldn't find Account.Name column in opps to join with channel_map.")
+        opps = opps.merge(
+            cmap[["account_name", "channel_id"]],
+            left_on=acct_col,
+            right_on="account_name",
+            how="left",
+        )
+        channel_col = "channel_id"
+        map_used = True
+
+    if metrics_colmap:
+        metrics = metrics.rename(columns={v: k for k, v in metrics_colmap.items()})
+
+    if "channel_id" not in metrics.columns:
+        raise ValueError("Metrics CSV must include 'channel_id' (or map it via --metrics-cols).")
+
+    for c in ["views_30d", "audience_size", "category", "growth_30d_pct", "channel_name"]:
+        if c not in metrics.columns:
+            metrics[c] = None
+
+    merged = opps.merge(
+        metrics[[
+            "channel_id",
+            "channel_name",
+            "views_30d",
+            "audience_size",
+            "category",
+            "growth_30d_pct",
+        ]],
+        left_on=channel_col,
+        right_on="channel_id",
+        how="left",
+    )
+
+    preferred = [
+        "Account.Id",
+        "Account.Name",
+        "Id",
+        "Name",
+        "StageName",
+        "Amount",
+        "CloseDate",
+        "Owner.Name",
+        channel_col,
+        "channel_name",
+        "views_30d",
+        "audience_size",
+        "category",
+        "growth_30d_pct",
+    ]
+    cols = [c for c in preferred if c in merged.columns] + [c for c in merged.columns if c not in preferred]
+    merged = merged[cols]
+
+    merged.attrs["channel_column"] = channel_col
+    merged.attrs["map_used"] = map_used
+
+    return merged
+
 
 def main():
     ap = argparse.ArgumentParser()
@@ -54,63 +155,19 @@ def main():
     args = ap.parse_args()
 
     opps = pd.read_csv(args.opps)
+    metrics = pd.read_csv(args.metrics)
+    cmap_df = pd.read_csv(args.map) if args.map else None
 
-    # 1) Ensure we have a channel_id column in opps, else join from map
-    channel_col = None
-    for col in ["Account.YouTube_Channel_ID__c", "YouTube_Channel_ID__c", "channel_id", "Channel_ID__c"]:
-        if col in opps.columns:
-            channel_col = col
-            break
-
-    if channel_col is None:
-        if not args.map:
-            raise SystemExit("Opps CSV has no channel_id column. Provide --map channel_map.csv (account_name,channel_id).")
-        cmap = pd.read_csv(args.map)
-        if "account_name" not in cmap.columns or "channel_id" not in cmap.columns:
-            raise SystemExit("channel_map.csv must include: account_name, channel_id")
-        acct_col = None
-        for col in ["Account.Name", "account_name", "Account"]:
-            if col in opps.columns:
-                acct_col = col
-                break
-        if acct_col is None:
-            raise SystemExit("Couldn't find Account.Name column in opps to join with channel_map.")
-        opps = opps.merge(cmap[["account_name","channel_id"]], left_on=acct_col, right_on="account_name", how="left")
-        channel_col = "channel_id"
-
-    # 2) Load Tubular metrics and normalize headers
-    met = pd.read_csv(args.metrics)
-    colmap = parse_colmap(args.metrics_cols)
-
-    # Apply column renames from mapping (old -> new names we expect)
-    if colmap:
-        met = met.rename(columns={v: k for k, v in colmap.items()})
-
-    # Ensure required columns exist in metrics CSV
-    needed = ["channel_id"]
-    for req in needed:
-        if req not in met.columns:
-            raise SystemExit(f"Metrics CSV must include '{req}' (or map it via --metrics-cols).")
-
-    # Optional columns; won't error if missing
-    for c in ["views_30d", "audience_size", "category", "growth_30d_pct", "channel_name"]:
-        if c not in met.columns:
-            met[c] = None
-
-    # 3) Join on channel_id
-    merged = opps.merge(met[["channel_id","channel_name","views_30d","audience_size","category","growth_30d_pct"]],
-                        left_on=channel_col, right_on="channel_id", how="left")
-
-    # 4) Reorder to highlight useful cols
-    preferred = [
-        "Account.Id", "Account.Name", "Id", "Name", "StageName", "Amount", "CloseDate", "Owner.Name",
-        channel_col, "channel_name", "views_30d", "audience_size", "category", "growth_30d_pct"
-    ]
-    cols = [c for c in preferred if c in merged.columns] + [c for c in merged.columns if c not in preferred]
-    merged = merged[cols]
+    try:
+        colmap = parse_colmap(args.metrics_cols)
+        merged = merge_data(opps, metrics, map_df=cmap_df, metrics_colmap=colmap)
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
 
     merged.to_csv(args.out, index=False)
-    print(f"Wrote {args.out} with {len(merged)} rows.")
+    channel_col = merged.attrs.get("channel_column", "channel_id")
+    print(f"Wrote {args.out} with {len(merged)} rows (joined on '{channel_col}').")
+
 
 if __name__ == "__main__":
     main()

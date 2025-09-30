@@ -35,6 +35,18 @@ With custom header mapping:
 python merge_no_api.py --opps opps.csv --map channel_map.csv --metrics tubular.csv --metrics-cols channel_id:Channel ID,views_30d:Views (30d),audience_size:Subscribers --out merged.csv
 ```
 
+## Interactive UI
+
+Launch the Streamlit workspace to upload CSV exports and download the merged output without
+using the command line:
+
+```bash
+streamlit run streamlit_app.py
+```
+
+The app previews your inputs, highlights how many opportunities matched Tubular data, and lets
+you download the merged CSV directly from the browser.
+
 ## Output
 
 Produces **merged.csv** with Salesforce Opps + Tubular metrics.
