@@ -1,10 +1,26 @@
 """Streamlit UI for merging Salesforce opportunities with Tubular metrics."""
-from typing import Optional
+from typing import Optional, TYPE_CHECKING
 
 import pandas as pd
 import streamlit as st
 
 from merge_no_api import merge_data, parse_colmap
+
+if TYPE_CHECKING:  # pragma: no cover - only for type hints when running tests/mypy
+    from streamlit.runtime.uploaded_file_manager import UploadedFile
+
+
+def _read_uploaded_csv(file: "UploadedFile", label: str) -> Optional[pd.DataFrame]:
+    """Load a CSV from an uploaded file object, rewinding the buffer before reading."""
+
+    try:
+        file.seek(0)
+        return pd.read_csv(file)
+    except pd.errors.EmptyDataError:
+        st.error(f"{label} appears to be empty. Upload a CSV with data.")
+    except Exception as exc:  # pragma: no cover - defensive logging for unexpected errors
+        st.error(f"Couldn't read {label}: {exc}")
+    return None
 
 st.set_page_config(page_title="Salesforce + Tubular Merge", layout="wide")
 
@@ -47,29 +63,23 @@ map_df: Optional[pd.DataFrame] = None
 metrics_df: Optional[pd.DataFrame] = None
 colmap = None
 
-if preview_toggle and opps_file is not None:
-    opps_df = pd.read_csv(opps_file)
-    st.caption("Opportunities preview")
-    st.dataframe(opps_df.head())
-else:
-    if opps_file is not None:
-        opps_df = pd.read_csv(opps_file)
+if opps_file is not None:
+    opps_df = _read_uploaded_csv(opps_file, "Salesforce opportunities CSV")
+    if preview_toggle and opps_df is not None:
+        st.caption("Opportunities preview")
+        st.dataframe(opps_df.head())
 
-if preview_toggle and map_file is not None:
-    map_df = pd.read_csv(map_file)
-    st.caption("Channel map preview")
-    st.dataframe(map_df.head())
-else:
-    if map_file is not None:
-        map_df = pd.read_csv(map_file)
+if map_file is not None:
+    map_df = _read_uploaded_csv(map_file, "Channel map CSV")
+    if preview_toggle and map_df is not None:
+        st.caption("Channel map preview")
+        st.dataframe(map_df.head())
 
-if preview_toggle and metrics_file is not None:
-    metrics_df = pd.read_csv(metrics_file)
-    st.caption("Tubular metrics preview")
-    st.dataframe(metrics_df.head())
-else:
-    if metrics_file is not None:
-        metrics_df = pd.read_csv(metrics_file)
+if metrics_file is not None:
+    metrics_df = _read_uploaded_csv(metrics_file, "Tubular metrics CSV")
+    if preview_toggle and metrics_df is not None:
+        st.caption("Tubular metrics preview")
+        st.dataframe(metrics_df.head())
 
 if metrics_mapping:
     try:
