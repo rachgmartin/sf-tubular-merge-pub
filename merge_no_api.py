@@ -29,6 +29,7 @@ Advanced:
     --metrics-cols channel_id:Channel ID,views_30d:Views (30d),audience_size:Subscribers
 """
 import argparse
+import sys
 from typing import Dict, Optional
 
 import pandas as pd
@@ -145,14 +146,29 @@ def merge_data(
     return merged
 
 
-def main():
+def main(argv=None):
+    """Run the CLI entrypoint.
+
+    Streamlit executes the application script via ``runpy`` which causes any
+    top-level modules to be re-executed as part of the reload cycle. When that
+    happens ``argparse`` would normally raise an error because we did not
+    provide the required CLI arguments. Instead of crashing (and spamming the
+    Streamlit logs) we detect the empty-argument case and simply print the
+    usage information.
+    """
+
     ap = argparse.ArgumentParser()
     ap.add_argument("--opps", required=True)
     ap.add_argument("--metrics", required=True, help="Tubular CSV export")
     ap.add_argument("--map", required=False, help="Optional channel_map.csv to attach channel_id by Account.Name")
     ap.add_argument("--out", required=True)
     ap.add_argument("--metrics-cols", required=False, default="", help="Header mapping new:old,new:old ...")
-    args = ap.parse_args()
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if not argv:
+        ap.print_help()
+        return
+
+    args = ap.parse_args(argv)
 
     opps = pd.read_csv(args.opps)
     metrics = pd.read_csv(args.metrics)
