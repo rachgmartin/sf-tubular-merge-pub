@@ -1,0 +1,4 @@
+Id,Name,StageName,Amount,CloseDate,Owner.Name,Account.Id,Account.Name,Account.YouTube_Channel_ID__c
+0061A00001abc123,DraftKings Q3 Campaign,Closed Won,80000,2025-09-15,Rachel Martin,0011A00001acct001,DraftKings,UCxxxxxxxxxxxx
+0061A00001abc456,P&G New Product Launch,Prospecting,120000,2025-09-30,John Smith,0011A00001acct002,Procter & Gamble,UCyyyyyyyyyyyy
+0061A00001abc789,Nike Holiday Collab,Negotiation,50000,2025-09-28,Jane Doe,0011A00001acct003,Nike,UCzzzzzzzzzzzz
